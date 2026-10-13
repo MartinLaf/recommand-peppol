@@ -1,8 +1,7 @@
 import { companyVerificationLog } from "@peppol/db/schema";
 import { companies } from "@peppol/db/schema";
 import { db } from "@recommand/db";
-import { and, eq, inArray } from "drizzle-orm";
-import { getEnterpriseData } from "./cbe-public-search/client";
+import { and, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { requiresArratechKycReview } from "./at/kyc";
 import { UserFacingError } from "@peppol/utils/util";
 import { verifyCompany } from "./companies";
@@ -18,6 +17,7 @@ import { lockCompanyRow, sameCompanyIdentity } from "./company-row-lock";
 import { getCurrentVerificationSession } from "./current-verification-session";
 import { sessionMatchesCompany } from "./at/kyc-onboarding-state";
 import { namesMatch } from "@peppol/utils/names-match";
+import { checkRepresentative, findRepresentativeReview, notifySupportOfRepresentativeReview } from "./representative-checks";
 
 export type CompanyVerificationLog = typeof companyVerificationLog.$inferSelect;
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -343,6 +343,59 @@ export async function createCompanyVerificationLog({
   return { log, verificationUrl, created };
 }
 
+/**
+ * After a successful identity check, holds the session for support when the
+ * company's register does not confirm that the representative may act for the
+ * company alone. The session goes to inReview with the reason in its error message,
+ * where support finds it and decides it with complete-verification. Support is
+ * told once per reason, however often the identity provider reports the result.
+ * Resolves to whether the session is held.
+ */
+export async function holdVerificationForRepresentativeReview(
+  {
+    log,
+    company,
+    verificationProofReference,
+  }: {
+    log: CompanyVerificationLog;
+    company: Company;
+    verificationProofReference: string;
+  },
+  dependencies: {
+    findReview: typeof findRepresentativeReview;
+    notifySupport: typeof notifySupportOfRepresentativeReview;
+  } = { findReview: findRepresentativeReview, notifySupport: notifySupportOfRepresentativeReview }
+): Promise<boolean> {
+  const representative = { firstName: log.firstName ?? "", lastName: log.lastName ?? "" };
+  const finding = await dependencies.findReview(company, representative);
+  if (!finding) {
+    return false;
+  }
+  const changed = await db
+    .update(companyVerificationLog)
+    .set({ status: "inReview", verificationProofReference, errorMessage: finding })
+    .where(
+      and(
+        eq(companyVerificationLog.id, log.id),
+        or(
+          ne(companyVerificationLog.status, "inReview"),
+          isNull(companyVerificationLog.errorMessage),
+          ne(companyVerificationLog.errorMessage, finding)
+        )
+      )
+    )
+    .returning({ id: companyVerificationLog.id });
+  if (changed.length > 0) {
+    await dependencies.notifySupport({
+      company,
+      sessionId: log.id,
+      representativeName: `${representative.firstName} ${representative.lastName}`,
+      finding,
+    });
+  }
+  return true;
+}
+
 export async function submitIdentityForm(
   companyVerificationLogId: string,
   log: CompanyVerificationLog,
@@ -367,35 +420,8 @@ export async function submitIdentityForm(
     throw new UserFacingError("The mandate has to be signed before the identity check can start.");
   }
 
-  let effectiveFirstName = firstName;
-  let effectiveLastName = lastName;
-
-  if (company.country === "BE") {
-    if (!company.enterpriseNumber) {
-      throw new UserFacingError("Company does not have an enterprise number. Please complete the company details first.");
-    }
-    const lookupNumber = company.country === "BE" && company.enterpriseNumber.toUpperCase().startsWith("BE") ? company.enterpriseNumber.slice(2) : company.enterpriseNumber;
-    const enterpriseData = await getEnterpriseData(lookupNumber, company.country);
-    const validRepresentatives = enterpriseData.representatives.filter(
-      (rep): rep is typeof rep & { firstName: string; lastName: string } => Boolean(rep.firstName && rep.lastName)
-    );
-
-    if (validRepresentatives.length === 0) {
-      effectiveFirstName = "UNKNOWN";
-      effectiveLastName = "UNKNOWN";
-    } else {
-      const isRepresentative = validRepresentatives.some(
-        (rep) =>
-          namesMatch(rep.firstName, firstName) &&
-          namesMatch(rep.lastName, lastName)
-      );
-      if (!isRepresentative) {
-        throw new UserFacingError(
-          "The provided name does not match any representative of this company in the CBE registry. Please contact support@recommand.eu to proceed with the verification."
-        );
-      }
-    }
-  }
+  // Who may act for the company, where its country's register says so.
+  const { firstName: effectiveFirstName, lastName: effectiveLastName } = await checkRepresentative(company, { firstName, lastName });
 
   return submitVerificationIdentity({
     company,

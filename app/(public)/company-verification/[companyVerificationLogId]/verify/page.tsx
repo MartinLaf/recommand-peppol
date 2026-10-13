@@ -46,6 +46,7 @@ type VerificationContext = {
     };
     isRepresentativeSelectionRequired: boolean;
     representatives: Representative[];
+    nameWithoutRepresentatives: "unknown" | "typed";
     isPlayground: boolean;
     isMandateRequired: boolean;
     mandateTitle: string | null;
@@ -77,7 +78,12 @@ export default function Page() {
     const [restartError, setRestartError] = useState<string | null>(null);
 
     const showRepresentativeSelection = context?.isRepresentativeSelectionRequired && context.representatives.length > 0;
-    const noRepresentativesFound = context?.isRepresentativeSelectionRequired && context.representatives.length === 0;
+    // A listed representative picks their name. When the register lists nobody, the
+    // identity check runs on an unknown name and is reviewed, or the representative
+    // types their name, depending on the country.
+    const noRepresentativesFound = context?.isRepresentativeSelectionRequired && context.representatives.length === 0
+        && context.nameWithoutRepresentatives === "unknown";
+    const showNameInputs = !showRepresentativeSelection && !noRepresentativesFound;
 
     const selectedRepresentative = useMemo(() => {
         if (!showRepresentativeSelection || selectedRepresentativeIndex === null) return null;
@@ -86,14 +92,14 @@ export default function Page() {
 
     const effectiveFirstName = noRepresentativesFound
         ? "UNKNOWN"
-        : showRepresentativeSelection
-            ? (selectedRepresentative?.firstName ?? "")
-            : firstName;
+        : showNameInputs
+            ? firstName
+            : (selectedRepresentative?.firstName ?? "");
     const effectiveLastName = noRepresentativesFound
         ? "UNKNOWN"
-        : showRepresentativeSelection
-            ? (selectedRepresentative?.lastName ?? "")
-            : lastName;
+        : showNameInputs
+            ? lastName
+            : (selectedRepresentative?.lastName ?? "");
 
     const isFormComplete =
         effectiveFirstName.trim() !== "" &&
@@ -498,7 +504,8 @@ export default function Page() {
                                     </CardDescription>
                                 </CardHeader>
                                 <CardContent className="space-y-4">
-                                    {showRepresentativeSelection ? (
+                                    {showRepresentativeSelection && (
+                                        <>
                                         <RadioGroup
                                             value={selectedRepresentativeIndex ?? ""}
                                             onValueChange={(value) => setSelectedRepresentativeIndex(value)}
@@ -520,7 +527,12 @@ export default function Page() {
                                                 </label>
                                             ))}
                                         </RadioGroup>
-                                    ) : (
+                                        <p className="text-xs text-muted-foreground">
+                                            {t`Is your name not on the list? Contact`} <a href={`mailto:support@recommand.eu?subject=Company Verification Assistance for ${context.company.id}`} className="underline underline-offset-4 hover:text-primary/80">support@recommand.eu</a>.
+                                        </p>
+                                        </>
+                                    )}
+                                    {showNameInputs && (
                                         <div className="grid gap-4 sm:grid-cols-2">
                                             <div className="space-y-2">
                                                 <Label htmlFor="firstName">{t`First name`}</Label>
