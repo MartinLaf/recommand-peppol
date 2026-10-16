@@ -12,6 +12,11 @@ import {
 import { requireIntegrationSupportedTeamAccess, type CompanyAccessContext } from "@peppol/utils/auth-middleware";
 import { verifyRecipient, fetchServiceMetadata, fetchBusinessCard } from "@peppol/data/recipient";
 import { getTeamExtension } from "@peppol/data/teams";
+import {
+    isSimulatedPlayground,
+    resolvePlaygroundAddress,
+} from "@peppol/data/playground/recipients";
+import { getDocumentTypeName } from "@peppol/utils/document-type-lookup";
 
 const server = new Server();
 
@@ -29,7 +34,7 @@ const supportedDocumentTypeResponse = z
 
 const verifyRecipientRouteDescription = describeRoute({
     operationId: "verifyRecipient",
-    description: "Look a Peppol address up in the SMP and report what the participant behind it is registered to receive. Use it before sending to check that an address exists and to see its document types. A lookup that fails, including for an address that is not registered at all, is not an error: the response is `{ isValid: false }` with no further fields.",
+    description: "Look a Peppol address up in the SMP and report what the participant behind it is registered to receive. Use it before sending to check that an address exists and to see its document types. A lookup that fails, including for an address that is not registered at all, is not an error: the response is `{ isValid: false }` with no further fields. In a playground that is not connected to the Peppol Test Network, an address that belongs to a company in the same playground reports that company's document types, without SMP or endpoint fields; any other address is looked up on the production network, as the send endpoint does.",
     summary: "Verify Recipient",
     tags: ["Recipients"],
     responses: {
@@ -67,6 +72,29 @@ async function _verifyRecipientImplementation(c: VerifyRecipientContext) {
         const { peppolAddress, includeEndpointDetails, includeBusinessCard } = c.req.valid("json");
         const teamExtension = await getTeamExtension(c.var.team.id);
         const useTestNetwork = teamExtension?.useTestNetwork ?? false;
+
+        // Answered from the same place a send would be routed from.
+        if (teamExtension && isSimulatedPlayground(teamExtension)) {
+            const playgroundAddress = await resolvePlaygroundAddress({ recipientAddress: peppolAddress, playgroundTeamId: c.var.team.id });
+            if (playgroundAddress?.kind === "unknown") {
+                return c.json(actionSuccess({ isValid: false }));
+            }
+            if (playgroundAddress?.kind === "company") {
+                const playgroundRecipient = playgroundAddress.recipient;
+                const docTypeIds = [...new Set(playgroundRecipient.registrations.map((registration) => registration.docTypeId))];
+                const result: Record<string, unknown> = {
+                    isValid: true,
+                    supportedDocuments: docTypeIds.map((docTypeId) => ({ name: getDocumentTypeName(docTypeId), docTypeId })),
+                };
+                if (includeBusinessCard) {
+                    Object.assign(result, {
+                        companyName: playgroundRecipient.company.name,
+                        countryCode: playgroundRecipient.company.country,
+                    });
+                }
+                return c.json(actionSuccess(result));
+            }
+        }
 
         const data = await verifyRecipient({ recipientAddress: peppolAddress, useTestNetwork });
 
