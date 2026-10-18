@@ -150,6 +150,11 @@ type SenderCandidate = Pick<CompanyIdentifier, "scheme" | "identifier">;
  * any identifier would be.
  */
 const SENDER_ADDITIONS: { addition: (identifier: SenderCandidate) => boolean; givesWayTo: (identifier: SenderCandidate) => boolean }[] = [
+  // A GEBA (0246) gives way to the German VAT number (9930).
+  {
+    addition: (identifier) => identifier.scheme === "0246",
+    givesWayTo: (identifier) => identifier.scheme === "9930",
+  },
   // A Luxembourg matricule under 9938 gives way to a VAT number under the same scheme.
   {
     addition: (identifier) => identifier.scheme === "9938" && /^\d{11}$/.test(identifier.identifier),
@@ -174,9 +179,9 @@ function givesWayAsSender(candidate: SenderCandidate, identifiers: readonly Send
  * - Otherwise the lowest scheme, as before, except that a Leitweg-ID is passed over
  *   while the company has any other identifier: it names an authority's invoice
  *   reception, which is never the address a supplier sends from.
- * - An identifier a company adds next to the one it sends from, such as a
- *   Luxembourg matricule beside the VAT number, is passed over as well; see
- *   SENDER_ADDITIONS.
+ * - An identifier a company adds next to the one it sends from, such as a GEBA
+ *   beside the German VAT number or a Luxembourg matricule beside the VAT
+ *   number, is passed over as well; see SENDER_ADDITIONS.
  */
 export function chooseSendingCompanyIdentifier<T extends Pick<CompanyIdentifier, "scheme" | "identifier">>(
   company: Pick<Company, "accessPointProvider">,

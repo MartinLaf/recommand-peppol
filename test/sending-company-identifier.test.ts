@@ -56,6 +56,16 @@ describe("the address a company sends under", () => {
     expect(chooseSendingCompanyIdentifier(otherCompany, sorted(vat, enterpriseNumber))).toBe(enterpriseNumber);
   });
 
+  it("keeps a German company sending from its VAT number when it adds a GEBA", () => {
+    const vat = { scheme: "9930", identifier: "de136695976" };
+    const geba = { scheme: "0246", identifier: "de136695976-00001" };
+    const gln = { scheme: "0088", identifier: "4000001000005" };
+    expect(chooseSendingCompanyIdentifier(otherCompany, sorted(vat, geba))).toBe(vat);
+    // Without a VAT number the GEBA is the address, and a lower scheme still comes first.
+    expect(chooseSendingCompanyIdentifier(otherCompany, sorted(geba))).toBe(geba);
+    expect(chooseSendingCompanyIdentifier(otherCompany, sorted(vat, geba, gln))).toBe(gln);
+  });
+
   it("keeps a Luxembourg company sending from its VAT number when it adds its matricule", () => {
     const vat = { scheme: "9938", identifier: "lu15027442" };
     const matricule = { scheme: "9938", identifier: "20042228800" };
