@@ -62,6 +62,8 @@ export function prebuildInvoiceUBL({
     purchaseOrderReference: invoice.purchaseOrderReference,
     documentNumber: invoice.invoiceNumber,
     customerAddress,
+    sellerCountry: invoice.seller.country,
+    buyerCountry: invoice.buyer.country,
   });
   return {
     Invoice: {
