@@ -38,7 +38,7 @@ const sendXmlSchema = z.string().openapi({
   ref: "XML",
   title: "XML",
   description:
-    "A complete Peppol UBL or CII document as a string. Set `doctypeId` yourself when it cannot be detected.",
+    "A complete Peppol UBL or CII document as a string. Set `doctypeId` yourself when it cannot be detected. The sender and receiver endpoints of a Peppol BIS Billing or Self-Billing invoice or credit note have to name the company and the `recipient` (rules BR-SBDH-1 to BR-SBDH-4). The document is refused with a 400 when its receiver endpoint is not a valid identifier under its scheme, or its sender endpoint is another company's VAT or enterprise number.",
 });
 
 /**
