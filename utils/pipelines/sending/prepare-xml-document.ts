@@ -5,11 +5,22 @@ import {
   resolveFormatProcessId,
 } from "@peppol/utils/type-repository/document-formats";
 import { selfDeclaredDocTypeId } from "@peppol/utils/type-repository/document-formats/xml-detection";
+import { assertDocTypeIdMatchesXml } from "./doctype-consistency";
 import { SendingFailure } from "./errors";
 import type { PreparedDocument, SendingInput } from "./types";
 
 export function prepareXmlDocument(input: SendingInput): PreparedDocument {
   const xml = input.document as string;
+  if (input.doctypeId) {
+    try {
+      assertDocTypeIdMatchesXml(xml, input.doctypeId, input.processId);
+    } catch (error) {
+      // Only a contradiction it established refuses the send; a failure of the check
+      // itself leaves the send as it would have been without it.
+      if (error instanceof SendingFailure) throw error;
+      console.error("Failed to compare the doctypeId with the XML document:", error);
+    }
+  }
   const format = input.doctypeId
     ? getDocumentFormatByDocTypeId(input.doctypeId)
     : detectDocumentFormat(xml, {
