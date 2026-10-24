@@ -1,9 +1,11 @@
 import { documentFormats } from "@peppol/utils/type-repository/document-formats";
 import {
   FRANCE_NON_REGULATED_PROCESS_ID,
+  FRANCE_REGULATED_PROCESS_ID,
   isFranceBillingProcessId,
 } from "@peppol/utils/type-repository/document-formats/france-process";
 import type { AccessPointProviderId } from "@peppol/data/peppol-providers";
+import { normalizeProcessId } from "@peppol/utils/parsing/process-id";
 import { SendingFailure } from "./errors";
 
 /** The access point the French regulated flows are transmitted over. */
@@ -89,4 +91,32 @@ export function isFranceRegulatedSendingSupported(options: {
   const usesFranceAccessPoint =
     isPlayground || company.accessPointProvider === FRANCE_ACCESS_POINT_PROVIDER;
   return isFrenchCompany && usesFranceAccessPoint;
+}
+
+/**
+ * A French regulated document only counts as issued once it has gone through the
+ * accredited platforms, so delivering one by email alone would hand the buyer a document
+ * the French regime does not recognise. That covers the French formats and the regulated
+ * process. The non-regulated process carries an ordinary Peppol BIS 3 document, which
+ * email may deliver like any other.
+ *
+ * Checked on what the request names before the document is written, so this is the
+ * answer rather than a field the French formats require, and again on what was chosen,
+ * since a French document may select the regulated process itself.
+ */
+export function assertNotFranceRegulatedByEmailOnly(options: {
+  docTypeId?: string;
+  processId?: string;
+}): void {
+  const isFrenchDocType = !!options.docTypeId && FRANCE_DOC_TYPE_IDS.has(options.docTypeId);
+  const isRegulatedProcess =
+    !!options.processId && normalizeProcessId(options.processId) === FRANCE_REGULATED_PROCESS_ID;
+  if (!isFrenchDocType && !isRegulatedProcess) {
+    return;
+  }
+
+  throw new SendingFailure(
+    "French regulated documents cannot be delivered by email only. Send them to a Peppol recipient.",
+    400,
+  );
 }

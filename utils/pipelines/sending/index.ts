@@ -22,7 +22,11 @@ import type { DeliveryFailureCategory } from "@peppol/data/deliveries/model";
 import { sendDocumentResponseBody } from "./response";
 import { emailFallbackRequest } from "@peppol/data/deliveries/email-fallback";
 import { recordOutgoingDocument } from "@peppol/data/record-outgoing-document";
-import { getRecipientCapabilities } from "@peppol/data/recipient-capabilities";
+import { isParticipantUnregistered } from "@peppol/data/recipient";
+import {
+  getRecipientCapabilities,
+  type RecipientCapabilities,
+} from "@peppol/data/recipient-capabilities";
 import { normalizePeppolAddress } from "@peppol/utils/parsing/peppol-address";
 import { sendSystemAlert } from "@peppol/utils/system-notifications/telegram";
 import { recordSendDocumentDelivery } from "@peppol/utils/metrics";
@@ -34,7 +38,10 @@ import {
   readEnvelopeParties,
 } from "./envelope-parties";
 import { SendingFailure } from "./errors";
-import { assertFranceRegulatedSendingSupported } from "./france-regulated-guard";
+import {
+  assertFranceRegulatedSendingSupported,
+  assertNotFranceRegulatedByEmailOnly,
+} from "./france-regulated-guard";
 import { prepareJsonDocument } from "./prepare-json-document";
 import { prepareXmlDocument } from "./prepare-xml-document";
 import type { SendingContext } from "./types";
@@ -111,6 +118,18 @@ export async function sendingPipeline(c: SendingContext) {
           })
         : null;
 
+    // Without a Peppol recipient a document is emailed as a PDF, unless the caller names
+    // the format it is to be written in: it is then written, validated and attached as
+    // it would be for a Peppol recipient, so a buyer who is not on Peppol still receives
+    // a structured document.
+    const isStructuredEmail = recipientAddress === null && !!input.doctypeId;
+    if (isStructuredEmail) {
+      assertNotFranceRegulatedByEmailOnly({
+        docTypeId: input.doctypeId,
+        processId: input.processId,
+      });
+    }
+
     const prepared =
       input.documentType === "xml"
         ? prepareXmlDocument(input)
@@ -122,6 +141,7 @@ export async function sendingPipeline(c: SendingContext) {
             documentId,
             isPlayground,
             recipientCapabilities,
+            structuredEmailTo: isStructuredEmail ? input.email?.to : undefined,
           });
 
     // Recorded as soon as it is known, before the guard below can refuse the send: how a
@@ -141,7 +161,15 @@ export async function sendingPipeline(c: SendingContext) {
       isPlayground,
     });
 
-    const xmlDocument = recipientAddress === null ? null : prepared.xml;
+    if (isStructuredEmail) {
+      assertNotFranceRegulatedByEmailOnly({
+        docTypeId: prepared.docTypeId,
+        processId: prepared.processId,
+      });
+    }
+
+    const xmlDocument =
+      recipientAddress === null && !isStructuredEmail ? null : prepared.xml;
     c.set("sendDocumentRecordingXml", xmlDocument);
 
     // The sender is not checked in the playground, whose transmissions are simulated
@@ -173,6 +201,18 @@ export async function sendingPipeline(c: SendingContext) {
         // return the same answer. Email delivery, if configured, still applies.
         peppolFailure = prepared.peppolRoutingFailure;
         peppolFailureCategory = "document_not_supported";
+      } else if (
+        await isRecipientUnregistered({
+          recipientAddress,
+          recipientCapabilities,
+          isPlayground,
+          useTestNetwork,
+        })
+      ) {
+        // The network says the participant does not exist, which is all an access point
+        // would find out as well. Email delivery, if configured, still applies.
+        peppolFailure = `Recipient ${recipientAddress} is not registered on the Peppol ${useTestNetwork ? "test network" : "network"}.`;
+        peppolFailureCategory = "recipient_not_found";
       } else if (isPlayground && !useTestNetwork) {
         try {
           await simulateSendAs4({
@@ -368,6 +408,36 @@ export async function sendingPipeline(c: SendingContext) {
       400,
     );
   }
+}
+
+/**
+ * Whether the recipient is known not to be registered on the network, so a transmission
+ * cannot be delivered. A recipient whose capabilities were looked up is registered. For
+ * any other, whether its lookup failed or the send named its format or is raw XML and
+ * did not look it up, the SML is asked: one DNS query rather than a request to the
+ * recipient's SMP. A simulated playground is always left to its simulator, which answers
+ * for the playground's own companies that the SML does not know.
+ *
+ * Only the network's own answer that the participant does not exist counts. A lookup
+ * that failed for any other reason leaves the transmission to be attempted, so a passing
+ * fault in the lookup is not taken to mean the recipient is not on Peppol.
+ */
+async function isRecipientUnregistered(options: {
+  recipientAddress: string;
+  recipientCapabilities: RecipientCapabilities | null;
+  isPlayground: boolean;
+  useTestNetwork: boolean;
+}): Promise<boolean> {
+  if (options.recipientCapabilities) {
+    return false;
+  }
+  if (options.isPlayground && !options.useTestNetwork) {
+    return false;
+  }
+  return isParticipantUnregistered({
+    recipientAddress: options.recipientAddress,
+    useTestNetwork: options.useTestNetwork,
+  });
 }
 
 export default sendingPipeline;
