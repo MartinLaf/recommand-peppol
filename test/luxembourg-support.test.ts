@@ -182,17 +182,18 @@ describe("scheme 0240", () => {
 });
 
 // Luxembourg has no default enterprise number scheme: a company records its matricule
-// or its RCS number. A matricule derives its 0240 identifier, which is also how a
-// company that names 0240 as its enterprise number scheme gets it.
-describe("the 0240 identifier a Luxembourg company gets by default", () => {
+// or its RCS number. A matricule derives its identifier under 9938, the scheme
+// Luxembourg addresses organisations under, also for a company that names 0240 as its
+// enterprise number scheme. 0240, which Luxembourg does not use, is not derived.
+describe("the identifier a Luxembourg matricule derives", () => {
   it("is derived from a matricule, however it is written", () => {
     for (const enterpriseNumber of ["20042228800", "2004 2228 800"]) {
       expect(derivedDefaultIdentifiers("LU", { enterpriseNumber, vatNumber: "LU15027442" })).toEqual([
-        { scheme: "0240", identifier: "20042228800" },
+        { scheme: "9938", identifier: "20042228800" },
       ]);
     }
     expect(derivedDefaultIdentifiers("LU", { enterpriseNumber: "20042228800", vatNumber: null })).toEqual([
-      { scheme: "0240", identifier: "20042228800" },
+      { scheme: "9938", identifier: "20042228800" },
     ]);
   });
 
